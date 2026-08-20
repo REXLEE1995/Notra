@@ -101,6 +101,8 @@ const SUPPORTED_LANGUAGES: &[&str] = &[
     "yaml",
 ];
 
+const CONTENT_SNIFF_LIMIT: usize = 8 * 1024;
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct DocumentDto {
@@ -463,7 +465,7 @@ async fn reopen_path_with_encoding(request: ReopenRequest) -> Result<DocumentDto
         Ok(DocumentDto {
             title,
             path: Some(path.display().to_string()),
-            language: language_from_path(Some(&path)),
+            language: language_from_path(Some(&path), &decoded.text),
             large_file: metadata.len() > EDITABLE_FILE_LIMIT_BYTES,
             text: decoded.text,
             encoding: encoding_label(decoded.encoding).to_owned(),
@@ -802,10 +804,11 @@ where
 
 fn document_to_dto(doc: Document) -> DocumentDto {
     let path = doc.meta.path.as_deref();
+    let language = language_from_path(path, &doc.text);
     DocumentDto {
         title: doc.title,
         path: path.map(|path| path.display().to_string()),
-        language: language_from_path(path),
+        language,
         large_file: doc.meta.read_only && doc.meta.file_size > EDITABLE_FILE_LIMIT_BYTES as usize,
         text: doc.text,
         encoding: encoding_label(doc.meta.encoding).to_owned(),
@@ -960,7 +963,7 @@ fn rename_file_in_place(path: &Path, requested_name: &str) -> Result<PathBuf, St
 
 #[cfg(test)]
 mod tests {
-    use super::rename_file_in_place;
+    use super::{language_from_content, rename_file_in_place};
     use std::fs;
     use std::time::{SystemTime, UNIX_EPOCH};
 
@@ -1011,6 +1014,22 @@ mod tests {
             "existing"
         );
         fs::remove_dir_all(&dir).expect("remove test directory");
+    }
+
+    #[test]
+    fn detects_xml_content_for_unknown_extensions() {
+        assert_eq!(
+            language_from_content("<job><name>Import</name></job>"),
+            Some("xml")
+        );
+    }
+
+    #[test]
+    fn detects_json_content_for_unknown_extensions() {
+        assert_eq!(
+            language_from_content("{\"steps\": [\"extract\"]}"),
+            Some("json")
+        );
     }
 }
 
@@ -1185,25 +1204,54 @@ fn is_text_like(path: &Path) -> bool {
 
     path.extension()
         .and_then(|ext| ext.to_str())
-        .map(|ext| language_from_extension(&ext.to_ascii_lowercase()).is_some())
+        .map(|ext| {
+            language_from_extension(&ext.to_ascii_lowercase()).is_some()
+                || fs::read(path)
+                    .ok()
+                    .is_some_and(|bytes| is_utf8_text(&bytes))
+        })
         .unwrap_or(true)
 }
 
-fn language_from_path(path: Option<&Path>) -> String {
-    let Some(path) = path else {
-        return "plaintext".to_owned();
-    };
-
-    if let Some(language) = language_from_file_name(path) {
-        return language.to_owned();
-    }
-
-    path.extension()
-        .and_then(|value| value.to_str())
-        .map(|value| value.to_ascii_lowercase())
-        .and_then(|ext| language_from_extension(&ext))
+fn language_from_path(path: Option<&Path>, text: &str) -> String {
+    path.and_then(language_from_file_name)
+        .or_else(|| {
+            path.and_then(Path::extension)
+                .and_then(|value| value.to_str())
+                .map(|value| value.to_ascii_lowercase())
+                .and_then(|ext| language_from_extension(&ext))
+        })
+        .or_else(|| language_from_content(text))
         .unwrap_or("plaintext")
         .to_owned()
+}
+
+fn language_from_content(text: &str) -> Option<&'static str> {
+    let sample: String = text.chars().take(CONTENT_SNIFF_LIMIT).collect();
+    let sample = sample.trim_start_matches('\u{feff}').trim_start();
+
+    let bytes = sample.as_bytes();
+    if sample.starts_with("<?xml")
+        || (bytes.first() == Some(&b'<')
+            && bytes
+                .get(1)
+                .is_some_and(|byte| byte.is_ascii_alphabetic() || matches!(*byte, b'_' | b':')))
+    {
+        return Some("xml");
+    }
+
+    if matches!(sample.as_bytes().first(), Some(b'{' | b'['))
+        && serde_json::from_str::<serde_json::Value>(sample).is_ok()
+    {
+        return Some("json");
+    }
+
+    None
+}
+
+fn is_utf8_text(bytes: &[u8]) -> bool {
+    let sample = &bytes[..bytes.len().min(CONTENT_SNIFF_LIMIT)];
+    !sample.contains(&0) && std::str::from_utf8(sample).is_ok()
 }
 
 fn language_from_file_name(path: &Path) -> Option<&'static str> {

@@ -227,6 +227,7 @@ interface OpenDocument extends DocumentDto {
   model: monaco.editor.ITextModel;
   dirty: boolean;
   savedText: string;
+  languageLocked: boolean;
   viewState?: monaco.editor.ICodeEditorViewState;
   encodingStatus: "编码已识别" | "重新解释" | "转换待保存";
 }
@@ -235,6 +236,7 @@ interface ClosedDocumentSnapshot extends DocumentDto {
   draftId?: string;
   dirty: boolean;
   savedText: string;
+  languageLocked: boolean;
   origin: DocumentOrigin;
   viewState?: monaco.editor.ICodeEditorViewState;
 }
@@ -278,6 +280,7 @@ interface DraftDocumentSnapshot {
   encoding: EncodingLabel;
   lineEnding: string;
   language: string;
+  languageLocked?: boolean;
   savedText: string;
   dirty: boolean;
 }
@@ -3251,6 +3254,7 @@ function createDocument(
     dirty?: boolean;
     savedText?: string;
     origin?: DocumentOrigin;
+    languageLocked?: boolean;
   } = {},
 ): OpenDocument {
   const uri = monaco.Uri.parse(`notra://model/${nextId}/${encodeURIComponent(dto.title)}`);
@@ -3264,12 +3268,14 @@ function createDocument(
     model,
     dirty: options.dirty ?? dto.text !== savedText,
     savedText,
+    languageLocked: options.languageLocked ?? (Boolean(dto.path) || dto.language !== "plaintext"),
     encodingStatus: "编码已识别",
   };
   model.onDidChangeContent(() => {
     doc.dirty = model.getValue() !== doc.savedText;
     doc.text = model.getValue();
     doc.fileSize = new Blob([doc.text]).size;
+    updateAutoDetectedLanguage(doc);
     state.searchRevision += 1;
     renderChrome();
     renderMarkdownOutline();
@@ -3621,6 +3627,7 @@ function rememberClosedDocument(doc: OpenDocument) {
     draftId: doc.draftId,
     dirty: doc.dirty,
     savedText: doc.savedText,
+    languageLocked: doc.languageLocked,
     origin: doc.origin,
     viewState: doc.viewState,
   });
@@ -3645,6 +3652,7 @@ async function reopenClosedDocument() {
     dirty: snapshot.dirty,
     savedText: snapshot.savedText,
     origin: snapshot.origin,
+    languageLocked: snapshot.languageLocked,
   });
   doc.viewState = snapshot.viewState;
   state.documents.push(doc);
@@ -4324,6 +4332,7 @@ function removeCollapsedDirsForDeletedPath(path: string) {
 function setLanguage(language: string) {
   const doc = activeDocument();
   doc.language = language;
+  doc.languageLocked = true;
   monaco.editor.setModelLanguage(doc.model, language);
   closeMenus();
   renderAll();
@@ -8530,6 +8539,7 @@ function createDraftDocument(snapshot: Partial<DraftDocumentSnapshot>) {
       draftId: snapshot.id || createDraftId(),
       dirty: snapshot.dirty ?? text !== (snapshot.savedText ?? ""),
       savedText: snapshot.savedText ?? "",
+      languageLocked: snapshot.languageLocked,
     },
   );
 }
@@ -8566,6 +8576,7 @@ function draftDocumentSnapshots() {
       encoding: doc.encoding,
       lineEnding: doc.lineEnding || "LF",
       language: doc.language || "plaintext",
+      languageLocked: doc.languageLocked,
       savedText: doc.savedText,
       dirty: doc.dirty,
     }));
@@ -9040,6 +9051,28 @@ function languageFromFilePath(path: string) {
   if (extension === "js" || extension === "mjs" || extension === "cjs") return "javascript";
   if (extension === "ts") return "typescript";
   if (extension === "yml") return "yaml";
+  return "plaintext";
+}
+
+function updateAutoDetectedLanguage(doc: OpenDocument) {
+  if (doc.languageLocked) return;
+  const language = languageFromContent(doc.text);
+  if (language === doc.language) return;
+  doc.language = language;
+  monaco.editor.setModelLanguage(doc.model, language);
+}
+
+function languageFromContent(text: string) {
+  const sample = text.slice(0, 8 * 1024).replace(/^\uFEFF/, "").trimStart();
+  if (sample.startsWith("<?xml") || /^<[A-Za-z_:]/.test(sample)) return "xml";
+  if ((sample.startsWith("{") || sample.startsWith("[")) && sample.length === text.length) {
+    try {
+      JSON.parse(sample);
+      return "json";
+    } catch {
+      // Keep plain text until the pasted JSON is complete.
+    }
+  }
   return "plaintext";
 }
 
