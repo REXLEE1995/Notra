@@ -87,8 +87,12 @@ docs/                       产品、架构和界面资料
 scripts/                    上游同步及开发脚本
 ```
 
-## 开源与致谢
+## 许可
 
-Notra 使用 [MIT License](LICENSE) 开源。
+本项目采用 [MIT License](LICENSE) 开源。
+
+## 致谢
+
+感谢 [LINUX DO](https://linux.do) 社区的支持与反馈。
 
 Markdown 即时编辑能力基于 [MarkText](https://github.com/marktext/marktext) 的 Muya 编辑器演进，固定的上游版本和许可证保留在 `crates/notra-app/frontend/vendor/marktext-muya`。代码编辑能力由 [Monaco Editor](https://github.com/microsoft/monaco-editor) 提供。各第三方依赖继续遵循其各自许可证。
