@@ -17,48 +17,9 @@
         background: #e8eef6;
         overflow: hidden;
       }
-
-      body.booting #app {
-        visibility: hidden;
-      }
-
-      .boot-splash {
-        position: fixed;
-        inset: 0;
-        z-index: 9999;
-        display: grid;
-        place-items: center;
-        color: #334155;
-        background: #e8eef6;
-        font: 600 13px "Segoe UI", "Microsoft YaHei UI", "Microsoft YaHei", Arial, sans-serif;
-      }
-
-      .boot-card {
-        display: grid;
-        justify-items: center;
-        gap: 12px;
-      }
-
-      .boot-mark {
-        width: 34px;
-        height: 34px;
-        border-radius: 8px;
-        display: block;
-        object-fit: contain;
-      }
-
-      body:not(.booting) .boot-splash {
-        display: none;
-      }
     </style>
   </head>
-  <body class="booting">
-    <div class="boot-splash" id="bootSplash" aria-hidden="true">
-      <div class="boot-card">
-        <img class="boot-mark" src="/icon.png" alt="" />
-        <div>正在启动 Notra</div>
-      </div>
-    </div>
+  <body>
     <main id="app">
       <header class="titlebar" id="windowTitlebar">
         <section class="brand">
@@ -787,7 +748,25 @@
         </div>
       </section>
 
-      <section class="popover markdown-context-menu hidden" id="markdownContextMenu" role="menu" aria-label="Markdown 编辑菜单">
+            <section class="popover editor-context-menu hidden" id="editorContextMenu" role="menu" aria-label="编辑器右键菜单">
+        <div class="menu-list">
+          <button class="menu-row" id="editorCutButton" role="menuitem"><span class="icon-slot" data-icon="Scissors"></span><strong>剪切</strong><small>Ctrl+X</small></button>
+          <button class="menu-row" id="editorCopyButton" role="menuitem"><span class="icon-slot" data-icon="Copy"></span><strong>复制</strong><small>Ctrl+C</small></button>
+          <button class="menu-row" id="editorPasteButton" role="menuitem"><span class="icon-slot" data-icon="ClipboardPaste"></span><strong>粘贴</strong><small>Ctrl+V</small></button>
+          <button class="menu-row" id="editorPastePlainButton" role="menuitem"><span class="icon-slot" data-icon="ClipboardPaste"></span><strong>粘贴为纯文本</strong><small>Ctrl+Shift+V</small></button>
+          <div class="menu-divider"></div>
+          <button class="menu-row" id="editorSelectAllButton" role="menuitem"><span class="icon-slot" data-icon="Check"></span><strong>全选</strong><small>Ctrl+A</small></button>
+          <div class="menu-divider"></div>
+          <button class="menu-row" id="editorUndoButton" role="menuitem"><span class="icon-slot" data-icon="Undo2"></span><strong>撤销</strong><small>Ctrl+Z</small></button>
+          <button class="menu-row" id="editorRedoButton" role="menuitem"><span class="icon-slot" data-icon="Redo2"></span><strong>重做</strong><small>Ctrl+Y</small></button>
+          <div class="menu-divider"></div>
+          <button class="menu-row" id="editorFindButton" role="menuitem"><span class="icon-slot" data-icon="Search"></span><strong>查找</strong><small>Ctrl+F</small></button>
+          <button class="menu-row" id="editorReplaceButton" role="menuitem"><span class="icon-slot" data-icon="Replace"></span><strong>替换</strong><small>Ctrl+H</small></button>
+          <button class="menu-row" id="editorFormatDocumentButton" role="menuitem"><span class="icon-slot" data-icon="Braces"></span><strong>格式化文档</strong><small>Shift+Alt+F</small></button>
+        </div>
+      </section>
+
+<section class="popover markdown-context-menu hidden" id="markdownContextMenu" role="menu" aria-label="Markdown 编辑菜单">
         <div class="markdown-context-action-grid" role="group" aria-label="剪贴板操作">
           <button class="markdown-context-control" type="button" data-markdown-action="cut" data-needs-selection data-needs-edit aria-label="剪切" title="剪切 Ctrl+X"><span class="icon-slot" data-icon="Scissors"></span></button>
           <button class="markdown-context-control" type="button" data-markdown-action="copy" data-needs-selection aria-label="复制" title="复制 Ctrl+C"><span class="icon-slot" data-icon="Copy"></span></button>

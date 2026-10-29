@@ -1226,12 +1226,19 @@ function bootstrap() {
     quickSuggestions: { other: true, comments: false, strings: false },
     multiCursorModifier: "alt",
     multiCursorPaste: "spread",
+    contextmenu: false,
     copyWithSyntaxHighlighting: true,
     unicodeHighlight: {
       ambiguousCharacters: true,
       invisibleCharacters: true,
       nonBasicASCII: false,
     },
+  });
+
+  editor.onContextMenu((event) => {
+    event.event.preventDefault();
+    event.event.stopPropagation();
+    openMonacoContextMenu(event.event.browserEvent, event.target.position);
   });
 
   searchDecorations = editor.createDecorationsCollection();
@@ -1257,14 +1264,7 @@ function bootstrap() {
   void initializeAppUpdate();
   // First paint can run before grid tracks resolve; force layout so Monaco is not 0×0.
   requestEditorLayout();
-  void restoreSession()
-    .then(async () => {
-      await syncSystemIntegrationPreferences();
-      await openStartupArgs();
-      openRequestsReady = true;
-      await drainOpenRequests();
-    })
-    .finally(markAppReady);
+  void initializeAppStartup().finally(markAppReady);
   log("Notra Monaco UI ready");
 }
 
@@ -1716,7 +1716,7 @@ function isEditorSurfaceFocused() {
 
 function bindActions() {
   bindAppMenus();
-  bindMarkdownContextMenu();
+  bindEditorContextMenu();
   $("markdownPreview").addEventListener("click", handleMarkdownPreviewClick);
   $("tree").addEventListener("scroll", scheduleSessionSave, { passive: true });
   $("tree").addEventListener("click", (event) => {
@@ -1926,6 +1926,66 @@ function bindActions() {
       resolveTextInputDialog();
     }
   });
+  $("editorCutButton").addEventListener("click", () => {
+    closeMenus();
+    void cutEditor();
+  });
+  $("editorCopyButton").addEventListener("click", () => {
+    closeMenus();
+    void copyEditor();
+  });
+  $("editorPasteButton").addEventListener("click", () => {
+    closeMenus();
+    void pasteEditor();
+  });
+  $("editorPastePlainButton").addEventListener("click", () => {
+    closeMenus();
+    void pastePlainText();
+  });
+  $("editorSelectAllButton").addEventListener("click", () => {
+    closeMenus();
+    selectAllEditor();
+  });
+  $("editorUndoButton").addEventListener("click", () => {
+    closeMenus();
+    undoEditor();
+  });
+  $("editorRedoButton").addEventListener("click", () => {
+    closeMenus();
+    redoEditor();
+  });
+  $("editorFindButton").addEventListener("click", () => {
+    closeMenus();
+    openCurrentFind("find");
+  });
+  $("editorReplaceButton").addEventListener("click", () => {
+    closeMenus();
+    openCurrentFind("replace");
+  });
+  $("editorFormatDocumentButton").addEventListener("click", () => {
+    closeMenus();
+    void formatActiveDocument();
+  });
+  $("editorContextMenu").addEventListener("click", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (target?.closest("button")) {
+      closeMenus();
+    }
+  });
+
+  window.addEventListener("contextmenu", (event) => {
+    const target = event.target instanceof Element ? event.target : null;
+    if (
+      target &&
+      target.matches(
+        "input:not([type='button']):not([type='checkbox']):not([type='radio']), textarea:not(.inputarea)",
+      )
+    ) {
+      return;
+    }
+    event.preventDefault();
+  });
+
   $("tree").addEventListener("contextmenu", openTreeMenu);
   $("treeOpenButton").addEventListener("click", () => void openTreeTarget());
   $("treeNewFileButton").addEventListener("click", () => void createTreeEntry(false));
@@ -2128,8 +2188,8 @@ function bindMenuAction(id: string, action: () => void) {
   });
 }
 
-function bindMarkdownContextMenu() {
-  $("editor").parentElement?.addEventListener("contextmenu", openMarkdownContextMenu);
+function bindEditorContextMenu() {
+  $("editor").parentElement?.addEventListener("contextmenu", onEditorSurfaceContextMenu);
   document.querySelectorAll<HTMLElement>(".markdown-context-menu").forEach((menu) => {
     menu.querySelectorAll<HTMLButtonElement>("[data-markdown-action]").forEach((button) => {
       button.addEventListener("click", () => {
@@ -2159,18 +2219,68 @@ function bindMarkdownContextMenu() {
   });
 }
 
-function openMarkdownContextMenu(event: Event) {
+function onEditorSurfaceContextMenu(event: Event) {
   const pointerEvent = event as MouseEvent;
   const target = pointerEvent.target instanceof Element ? pointerEvent.target : null;
-  if (!markdownEditor || !isMarkdownWysiwygActive() || !target || !markdownEditor.root.contains(target)) return;
+  if (!target) return;
   if (target.closest("input, textarea, select, .mu-float")) return;
+
+  if (markdownEditor && isMarkdownWysiwygActive() && markdownEditor.root.contains(target)) {
+    openMarkdownContextMenu(pointerEvent, target);
+    return;
+  }
+
+  pointerEvent.preventDefault();
+  pointerEvent.stopPropagation();
+  const hit = editor.getTargetAtClientPoint(pointerEvent.clientX, pointerEvent.clientY);
+  openMonacoContextMenu(pointerEvent, hit?.position ?? null);
+}
+
+function openMonacoContextMenu(pointerEvent: MouseEvent, targetPosition?: monaco.IPosition | null) {
   pointerEvent.preventDefault();
   pointerEvent.stopPropagation();
   closeMenus();
   closeFontDropdowns();
-  const isImageContext = markdownEditor.captureImageContext(target);
-  const isTableContext = !isImageContext && markdownEditor.captureTableContext(target);
-  markdownEditor.hideFloatTools();
+
+  if (targetPosition) {
+    const selection = editor.getSelection();
+    if (!selection || !selection.containsPosition(targetPosition)) {
+      editor.setPosition(targetPosition);
+    }
+  }
+
+  const menu = $("editorContextMenu");
+  updateEditorContextMenuState();
+  showContextMenu(menu, pointerEvent, 248, 380);
+}
+
+function updateEditorContextMenuState() {
+  const doc = activeDocument();
+  const readOnly = doc.readOnly || editorBusyDepth > 0;
+  const selection = editor.getSelection();
+  const hasSelection = Boolean(selection && !selection.isEmpty());
+  const hasContent = Boolean(doc.model && doc.model.getValueLength() > 0);
+
+  $<HTMLButtonElement>("editorCutButton").disabled = readOnly || !hasSelection;
+  $<HTMLButtonElement>("editorCopyButton").disabled = !hasSelection;
+  $<HTMLButtonElement>("editorPasteButton").disabled = readOnly;
+  $<HTMLButtonElement>("editorPastePlainButton").disabled = readOnly;
+  $<HTMLButtonElement>("editorSelectAllButton").disabled = !hasContent;
+  $<HTMLButtonElement>("editorUndoButton").disabled = readOnly;
+  $<HTMLButtonElement>("editorRedoButton").disabled = readOnly;
+  $<HTMLButtonElement>("editorFindButton").disabled = false;
+  $<HTMLButtonElement>("editorReplaceButton").disabled = readOnly;
+  $<HTMLButtonElement>("editorFormatDocumentButton").disabled = readOnly || !isFormattingActionSupported(doc);
+}
+
+function openMarkdownContextMenu(pointerEvent: MouseEvent, target: Element) {
+  pointerEvent.preventDefault();
+  pointerEvent.stopPropagation();
+  closeMenus();
+  closeFontDropdowns();
+  const isImageContext = markdownEditor?.captureImageContext(target) ?? false;
+  const isTableContext = !isImageContext && (markdownEditor?.captureTableContext(target) ?? false);
+  markdownEditor?.hideFloatTools();
   const menu = $(isImageContext
     ? "markdownImageContextMenu"
     : isTableContext
@@ -3395,7 +3505,7 @@ async function openPath(path: string, remember = false) {
   if (remember) rememberRecentPath(path);
 }
 
-function addOrReplaceDocument(dto: DocumentDto, origin: DocumentOrigin) {
+function addOrReplaceDocument(dto: DocumentDto, origin: DocumentOrigin, activate = true) {
   const existing = state.documents.find((doc) => doc.path && doc.path === dto.path);
   if (existing) {
     if (!existing.dirty) {
@@ -3408,7 +3518,7 @@ function addOrReplaceDocument(dto: DocumentDto, origin: DocumentOrigin) {
   }
   const doc = createDocument(dto, { origin });
   state.documents.push(doc);
-  activateDocument(doc.id);
+  if (activate) activateDocument(doc.id);
   log(`打开 ${doc.title}`);
 }
 
@@ -3727,6 +3837,7 @@ function showContextMenu(menu: HTMLElement, event: MouseEvent, fallbackWidth: nu
 
 function activeContextMenu() {
   return [
+    $("editorContextMenu"),
     $("tabOverflowMenu"),
     $("tabMenu"),
     $("treeMenu"),
@@ -7613,6 +7724,7 @@ function closeMenus() {
   $("recentMenu").classList.add("hidden");
   $("tabMenu").classList.add("hidden");
   $("treeMenu").classList.add("hidden");
+  $("editorContextMenu").classList.add("hidden");
   $("markdownContextMenu").classList.add("hidden");
   $("markdownImageContextMenu").classList.add("hidden");
   $("markdownTableContextMenu").classList.add("hidden");
@@ -8160,6 +8272,81 @@ async function importKeybindings() {
   }
 }
 
+async function copyEditor() {
+  if (isMarkdownWysiwygActive() && markdownEditor) {
+    const text = markdownEditor.selectedText();
+    if (text) {
+      await navigator.clipboard.writeText(text);
+    } else {
+      markdownEditor.focus();
+      document.execCommand("copy");
+    }
+    return;
+  }
+  const selection = editor.getSelection();
+  if (selection && !selection.isEmpty()) {
+    const text = editor.getModel()?.getValueInRange(selection);
+    if (text) {
+      try {
+        await navigator.clipboard.writeText(text);
+      } catch {
+        editor.focus();
+        document.execCommand("copy");
+      }
+    }
+  } else {
+    const position = editor.getPosition();
+    if (position) {
+      const lineContent = editor.getModel()?.getLineContent(position.lineNumber);
+      if (lineContent !== undefined) {
+        await navigator.clipboard.writeText(lineContent + (activeDocument().lineEnding === "CRLF" ? "\r\n" : "\n"));
+      }
+    }
+  }
+  editor.focus();
+}
+
+async function cutEditor() {
+  const doc = activeDocument();
+  if (doc.readOnly) return;
+  if (isMarkdownWysiwygActive() && markdownEditor) {
+    const text = markdownEditor.selectedText();
+    if (text) {
+      await navigator.clipboard.writeText(text);
+      markdownEditor.focus();
+      document.execCommand("delete");
+    } else {
+      markdownEditor.focus();
+      document.execCommand("cut");
+    }
+    return;
+  }
+  const selection = editor.getSelection();
+  if (selection && !selection.isEmpty()) {
+    const text = editor.getModel()?.getValueInRange(selection);
+    if (text) {
+      try {
+        await navigator.clipboard.writeText(text);
+        editor.executeEdits("cut", [{ range: selection, text: "", forceMoveMarkers: true }]);
+      } catch {
+        editor.focus();
+        document.execCommand("cut");
+      }
+    }
+  }
+  editor.focus();
+}
+
+async function pasteEditor() {
+  const doc = activeDocument();
+  if (doc.readOnly) return;
+  if (isMarkdownWysiwygActive() && markdownEditor) {
+    await markdownEditor.pasteAsPlainText();
+    return;
+  }
+  await pastePlainText();
+}
+
 async function pastePlainText() {
   if (isMarkdownWysiwygActive() && markdownEditor) {
     await markdownEditor.pasteAsPlainText();
@@ -8298,86 +8485,92 @@ function renderCommandSelection() {
   });
 }
 
-async function restoreSession() {
-  let raw: string | null = null;
-  let migratedLegacySession = false;
-  try {
-    raw = await invoke<string | null>("load_session");
-  } catch (error) {
-    log(`读取会话数据库失败：${String(error)}`);
+function discardCleanPlaceholder() {
+  const placeholder = state.documents.find(
+    (doc) => !doc.path && doc.title === "Untitled-1.txt" && !doc.dirty && doc.model.getValueLength() === 0,
+  );
+  if (placeholder && state.documents.length > 1) {
+    state.documents = state.documents.filter((doc) => doc !== placeholder);
+    if (editor.getModel() === placeholder.model) {
+      const active = activeDocument();
+      if (active) editor.setModel(active.model);
+    }
+    placeholder.model.dispose();
   }
-  if (!raw) {
-    raw = localStorage.getItem(SESSION_KEY);
-    migratedLegacySession = Boolean(raw);
+}
+
+function applySessionSnapshotSettings(snapshot: Partial<SessionSnapshot>) {
+  state.recentFiles = uniquePaths(snapshot.recentFiles ?? []).slice(0, 40);
+  if ((snapshot.version ?? 1) < 3 && snapshot.workspaceRoot) {
+    state.recentFiles = state.recentFiles.filter(
+      (path) => !pathMatchesTarget(path, snapshot.workspaceRoot!, true),
+    );
   }
-  if (!raw) return;
+  state.recentWorkspaces = uniquePaths(snapshot.recentWorkspaces ?? []).slice(0, 20);
+  state.collapsedDirs = new Set(snapshot.collapsedDirs ?? []);
+  state.searchHistory = (snapshot.searchHistory ?? []).slice(0, 30);
+  state.replaceHistory = (snapshot.replaceHistory ?? []).slice(0, 30);
+  state.searchFavorites = (snapshot.searchFavorites ?? []).slice(0, 30);
+  state.findView = snapshot.findView ?? "find";
+  state.mode = snapshot.workMode ?? (snapshot.workspaceRoot ? "workspace" : "single");
+  state.rightTool = snapshot.rightTool === "outline" ? "outline" : "search";
+  state.rightSidebarWidth = snapshot.rightSidebarWidth ?? state.rightSidebarWidth;
+  state.explorerWidth = Number.isFinite(snapshot.explorerWidth)
+    ? snapshot.explorerWidth ?? DEFAULT_EXPLORER_WIDTH
+    : DEFAULT_EXPLORER_WIDTH;
+  state.markdownPreviewWidth = Number.isFinite(snapshot.markdownPreviewWidth)
+    ? Math.max(0, snapshot.markdownPreviewWidth ?? 0)
+    : 0;
+  state.contextMenuEnabled = snapshot.contextMenuEnabled ?? true;
+  state.defaultAppCandidateEnabled = snapshot.defaultAppCandidateEnabled ?? true;
+  setRightSidebarWidth(state.rightSidebarWidth);
+  applyExplorerWidth();
+  applyMarkdownPreviewWidth();
+  state.markdownEditMode = isMarkdownEditMode(snapshot.markdownEditMode)
+    ? snapshot.markdownEditMode
+    : snapshot.markdownPreviewPreferenceSet
+      ? snapshot.showMarkdownPreview ? "split" : "source"
+      : "wysiwyg";
+  state.markdownContentWidth = isMarkdownContentWidth(snapshot.markdownContentWidth)
+    ? snapshot.markdownContentWidth
+    : "typora";
+  state.wordWrap = snapshot.wordWrap ?? state.wordWrap;
+  state.minimap = snapshot.minimap ?? state.minimap;
+  state.smoothCaretAnimation = snapshot.smoothCaretAnimation ?? state.smoothCaretAnimation;
+  state.renderWhitespace = snapshot.renderWhitespace ?? state.renderWhitespace;
+  state.fontSize = snapshot.fontSize ?? state.fontSize;
+  state.shellFontMode = normalizeFontMode(snapshot.shellFontMode, state.shellFontMode);
+  state.shellFontPreset = isShellFontPreset(snapshot.shellFontPreset) ? snapshot.shellFontPreset : state.shellFontPreset;
+  state.shellFontCustom = normalizeFontStack(snapshot.shellFontCustom, state.shellFontCustom);
+  state.shellFontSize = Math.min(18, Math.max(12, snapshot.shellFontSize ?? state.shellFontSize));
+  state.editorFontMode = normalizeFontMode(snapshot.editorFontMode, state.editorFontMode);
+  state.editorFontPreset = isEditorFontPreset(snapshot.editorFontPreset) ? snapshot.editorFontPreset : state.editorFontPreset;
+  state.editorFontCustom = normalizeFontStack(snapshot.editorFontCustom, state.editorFontCustom);
+  state.keymapProfile = isKeymapProfile(snapshot.keymapProfile) ? snapshot.keymapProfile : "vscode";
+  state.keybindingOverrides = normalizeKeybindingOverrides(snapshot.keybindingOverrides);
+  state.bookmarks = normalizeBookmarkSnapshot(snapshot.bookmarks);
+  applyShellFontSettings();
+  applyEditorSettings();
+  applyMarkdownContentWidth();
+
+  applySearchSnapshot(snapshot);
+  setFindView(state.findView, false);
+
+  if (snapshot.darkMode) {
+    state.darkMode = true;
+    document.body.classList.add("dark");
+    monaco.editor.setTheme("notra-dark");
+    setThemeButton();
+  }
+}
+
+async function restoreSessionSnapshot(
+  snapshot: Partial<SessionSnapshot>,
+  options: { preserveActiveDocument: boolean; migratedLegacySession: boolean },
+) {
   state.restoring = true;
   try {
-    const snapshot = JSON.parse(raw) as Partial<SessionSnapshot>;
-    state.recentFiles = uniquePaths(snapshot.recentFiles ?? []).slice(0, 40);
-    if ((snapshot.version ?? 1) < 3 && snapshot.workspaceRoot) {
-      state.recentFiles = state.recentFiles.filter(
-        (path) => !pathMatchesTarget(path, snapshot.workspaceRoot!, true),
-      );
-    }
-    state.recentWorkspaces = uniquePaths(snapshot.recentWorkspaces ?? []).slice(0, 20);
-    state.collapsedDirs = new Set(snapshot.collapsedDirs ?? []);
-    state.searchHistory = (snapshot.searchHistory ?? []).slice(0, 30);
-    state.replaceHistory = (snapshot.replaceHistory ?? []).slice(0, 30);
-    state.searchFavorites = (snapshot.searchFavorites ?? []).slice(0, 30);
-    state.findView = snapshot.findView ?? "find";
-    state.mode = snapshot.workMode ?? (snapshot.workspaceRoot ? "workspace" : "single");
-    state.rightTool = snapshot.rightTool === "outline" ? "outline" : "search";
-    state.rightSidebarWidth = snapshot.rightSidebarWidth ?? state.rightSidebarWidth;
-    state.explorerWidth = Number.isFinite(snapshot.explorerWidth)
-      ? snapshot.explorerWidth ?? DEFAULT_EXPLORER_WIDTH
-      : DEFAULT_EXPLORER_WIDTH;
-    state.markdownPreviewWidth = Number.isFinite(snapshot.markdownPreviewWidth)
-      ? Math.max(0, snapshot.markdownPreviewWidth ?? 0)
-      : 0;
-    state.contextMenuEnabled = snapshot.contextMenuEnabled ?? true;
-    state.defaultAppCandidateEnabled = snapshot.defaultAppCandidateEnabled ?? true;
-    setRightSidebarWidth(state.rightSidebarWidth);
-    applyExplorerWidth();
-    applyMarkdownPreviewWidth();
-    state.markdownEditMode = isMarkdownEditMode(snapshot.markdownEditMode)
-      ? snapshot.markdownEditMode
-      : snapshot.markdownPreviewPreferenceSet
-        ? snapshot.showMarkdownPreview ? "split" : "source"
-        : "wysiwyg";
-    state.markdownContentWidth = isMarkdownContentWidth(snapshot.markdownContentWidth)
-      ? snapshot.markdownContentWidth
-      : "typora";
-    state.wordWrap = snapshot.wordWrap ?? state.wordWrap;
-    state.minimap = snapshot.minimap ?? state.minimap;
-    state.smoothCaretAnimation = snapshot.smoothCaretAnimation ?? state.smoothCaretAnimation;
-    state.renderWhitespace = snapshot.renderWhitespace ?? state.renderWhitespace;
-    state.fontSize = snapshot.fontSize ?? state.fontSize;
-    state.shellFontMode = normalizeFontMode(snapshot.shellFontMode, state.shellFontMode);
-    state.shellFontPreset = isShellFontPreset(snapshot.shellFontPreset) ? snapshot.shellFontPreset : state.shellFontPreset;
-    state.shellFontCustom = normalizeFontStack(snapshot.shellFontCustom, state.shellFontCustom);
-    state.shellFontSize = Math.min(18, Math.max(12, snapshot.shellFontSize ?? state.shellFontSize));
-    state.editorFontMode = normalizeFontMode(snapshot.editorFontMode, state.editorFontMode);
-    state.editorFontPreset = isEditorFontPreset(snapshot.editorFontPreset) ? snapshot.editorFontPreset : state.editorFontPreset;
-    state.editorFontCustom = normalizeFontStack(snapshot.editorFontCustom, state.editorFontCustom);
-    state.keymapProfile = isKeymapProfile(snapshot.keymapProfile) ? snapshot.keymapProfile : "vscode";
-    state.keybindingOverrides = normalizeKeybindingOverrides(snapshot.keybindingOverrides);
-    state.bookmarks = normalizeBookmarkSnapshot(snapshot.bookmarks);
-    applyShellFontSettings();
-    applyEditorSettings();
-    applyMarkdownContentWidth();
-
-    applySearchSnapshot(snapshot);
-    setFindView(state.findView, false);
-
-    if (snapshot.darkMode) {
-      state.darkMode = true;
-      document.body.classList.add("dark");
-      monaco.editor.setTheme("notra-dark");
-      setThemeButton();
-    }
-
-    if (snapshot.workspaceRoot) {
+    if (snapshot.workspaceRoot && !state.workspace) {
       try {
         const workspace = await invoke<WorkspaceDto>("read_workspace", { path: snapshot.workspaceRoot });
         state.workspace = workspace;
@@ -8396,17 +8589,26 @@ async function restoreSession() {
 
     const restoredFiles = uniquePaths(snapshot.openFiles ?? []);
     let restoredCount = 0;
-    for (const path of restoredFiles) {
-      try {
-        const dto = await invoke<DocumentDto>("open_path", { path });
-        addOrReplaceDocument(dto, restoredDocumentOrigin(path, snapshot));
-        const restored = state.documents.find((doc) => doc.path === path);
-        if (restored) restored.viewState = snapshot.documentViews?.[documentSessionKey(restored)];
-        restoredCount += 1;
-      } catch (error) {
-        log(`恢复文件失败：${path}：${String(error)}`);
-      }
+    const fileResults = await Promise.all(
+      restoredFiles.map(async (path) => {
+        if (state.documents.some((doc) => doc.path === path)) return null;
+        try {
+          const dto = await invoke<DocumentDto>("open_path", { path });
+          return { path, dto };
+        } catch (error) {
+          log(`恢复文件失败：${path}：${String(error)}`);
+          return null;
+        }
+      }),
+    );
+    for (const item of fileResults) {
+      if (!item) continue;
+      addOrReplaceDocument(item.dto, restoredDocumentOrigin(item.path, snapshot), !options.preserveActiveDocument);
+      const restored = state.documents.find((doc) => doc.path === item.path);
+      if (restored) restored.viewState = snapshot.documentViews?.[documentSessionKey(restored)];
+      restoredCount += 1;
     }
+
     let restoredDraftCount = 0;
     for (const draft of snapshot.draftDocuments ?? []) {
       const doc = createDraftDocument(draft);
@@ -8416,26 +8618,24 @@ async function restoreSession() {
       restoredDraftCount += 1;
     }
 
-  const placeholder = state.documents.find((doc) => !doc.path && doc.title === "Untitled-1.txt" && !doc.dirty);
-    if (restoredCount + restoredDraftCount > 0 && placeholder && state.documents.length > 1) {
-      state.documents = state.documents.filter((doc) => doc !== placeholder);
-    }
-    const active = snapshot.activePath
-      ? state.documents.find((doc) => doc.path === snapshot.activePath)
-      : snapshot.activeDraftId
-        ? state.documents.find((doc) => doc.draftId === snapshot.activeDraftId)
-        : null;
-    if (active) state.activeId = active.id;
-    if (!state.documents.some((doc) => doc.id === state.activeId)) {
-      state.activeId = state.documents[0].id;
-    }
-    // Switch model first so the disposed placeholder is never left attached to the editor.
-    const restoredActive = activeDocument();
-    editor.setModel(restoredActive.model);
-    applyEditorPerformanceProfile(restoredActive);
-    if (restoredActive.viewState) editor.restoreViewState(restoredActive.viewState);
-    if (placeholder && !state.documents.includes(placeholder)) {
-      placeholder.model.dispose();
+    discardCleanPlaceholder();
+
+    if (!options.preserveActiveDocument) {
+      const active = snapshot.activePath
+        ? state.documents.find((doc) => doc.path === snapshot.activePath)
+        : snapshot.activeDraftId
+          ? state.documents.find((doc) => doc.draftId === snapshot.activeDraftId)
+          : null;
+      if (active) state.activeId = active.id;
+      if (!state.documents.some((doc) => doc.id === state.activeId)) {
+        state.activeId = state.documents[0].id;
+      }
+      const restoredActive = activeDocument();
+      if (restoredActive) {
+        editor.setModel(restoredActive.model);
+        applyEditorPerformanceProfile(restoredActive);
+        if (restoredActive.viewState) editor.restoreViewState(restoredActive.viewState);
+      }
     }
 
     const rightSidebarAvailable =
@@ -8460,7 +8660,7 @@ async function restoreSession() {
     });
     window.setTimeout(requestEditorLayout, 120);
     window.setTimeout(requestEditorLayout, 360);
-    if (migratedLegacySession) {
+    if (options.migratedLegacySession) {
       try {
         await saveSession();
         localStorage.removeItem(SESSION_KEY);
@@ -8474,13 +8674,56 @@ async function restoreSession() {
   }
 }
 
-async function openStartupArgs() {
-  try {
-    const args = await invoke<StartupArgsDto>("startup_args");
-    await applyOpenRequest(args);
-  } catch (error) {
-    log(`启动参数处理失败：${String(error)}`);
+async function initializeAppStartup() {
+  const startupArgsPromise = invoke<StartupArgsDto>("startup_args").catch((error) => {
+    log(`启动参数获取失败：${String(error)}`);
+    return { files: [], directories: [] } as StartupArgsDto;
+  });
+
+  const sessionPromise = invoke<string | null>("load_session").catch((error) => {
+    log(`读取会话数据库失败：${String(error)}`);
+    return null;
+  });
+
+  const [startupArgs, sessionRawFromDb] = await Promise.all([startupArgsPromise, sessionPromise]);
+  let sessionRaw = sessionRawFromDb;
+  let migratedLegacySession = false;
+  if (!sessionRaw) {
+    sessionRaw = localStorage.getItem(SESSION_KEY);
+    migratedLegacySession = Boolean(sessionRaw);
   }
+
+  let snapshot: Partial<SessionSnapshot> | null = null;
+  if (sessionRaw) {
+    try {
+      snapshot = JSON.parse(sessionRaw) as Partial<SessionSnapshot>;
+      applySessionSnapshotSettings(snapshot);
+    } catch (error) {
+      log(`解析会话快照失败：${String(error)}`);
+    }
+  }
+
+  const hasStartupOpen = startupArgs.files.length > 0 || startupArgs.directories.length > 0;
+  if (hasStartupOpen) {
+    await applyOpenRequest(startupArgs);
+    discardCleanPlaceholder();
+    openRequestsReady = true;
+    requestEditorLayout();
+    renderAll();
+    if (snapshot) {
+      await restoreSessionSnapshot(snapshot, { preserveActiveDocument: true, migratedLegacySession });
+    }
+  } else {
+    if (snapshot) {
+      await restoreSessionSnapshot(snapshot, { preserveActiveDocument: false, migratedLegacySession });
+    }
+    openRequestsReady = true;
+    requestEditorLayout();
+    renderAll();
+  }
+
+  await drainOpenRequests();
+  void syncSystemIntegrationPreferences();
 }
 
 async function drainOpenRequests() {

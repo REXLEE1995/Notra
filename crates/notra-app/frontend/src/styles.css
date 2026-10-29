@@ -2067,6 +2067,11 @@ body.dark .markdown-preview .token.variable {
   max-height: none;
 }
 
+.editor-context-menu {
+  width: 248px;
+  max-height: none;
+}
+
 .markdown-context-menu {
   width: 258px;
   max-height: none;
