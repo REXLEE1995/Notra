@@ -359,6 +359,11 @@ pub fn run() {
                 if let Err(error) = window.restore_state(persisted_window_state_flags()) {
                     eprintln!("恢复窗口状态失败：{error}");
                 }
+                let window_clone = window.clone();
+                std::thread::spawn(move || {
+                    std::thread::sleep(std::time::Duration::from_millis(1500));
+                    let _ = window_clone.show();
+                });
             }
             let database_path = app
                 .path()
@@ -400,9 +405,17 @@ pub fn run() {
             set_default_app_candidate,
             supported_languages,
             supported_encodings,
+            show_window,
         ])
         .run(tauri::generate_context!())
         .expect("failed to run Notra");
+}
+
+#[tauri::command]
+fn show_window(window: tauri::WebviewWindow) -> Result<(), String> {
+    window.show().map_err(|e| e.to_string())?;
+    let _ = window.set_focus();
+    Ok(())
 }
 
 #[tauri::command]

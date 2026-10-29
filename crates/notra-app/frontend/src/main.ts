@@ -1274,6 +1274,9 @@ function markAppReady() {
       requestEditorLayout();
       document.body.classList.remove("booting");
       $("bootSplash")?.remove();
+      void invoke("show_window").catch(() => {
+        void appWindow.show().catch(() => {});
+      });
     });
   });
 }
