@@ -79,7 +79,7 @@
         </section>
       </header>
 
-      <nav class="toolbar">
+      <nav class="toolbar" id="toolbar">
         <div class="tool-group primary-actions" aria-label="常用工具">
           <button class="tool-button" id="newButton" aria-label="新建 Ctrl+N" title="新建 Ctrl+N" aria-keyshortcuts="Control+N"><span class="icon-slot" data-icon="FilePlus2"></span><span data-label>新建</span></button>
           <button class="tool-button" id="openButton" aria-label="打开文件 Ctrl+O" title="打开文件 Ctrl+O" aria-keyshortcuts="Control+O"><span class="icon-slot" data-icon="FolderOpen"></span><span data-label>打开文件</span></button>
@@ -160,6 +160,8 @@
 
       <section class="popover app-menu hidden" id="viewMenu" role="menu" aria-label="视图菜单">
         <div class="menu-list">
+          <button class="menu-row" id="menuToolbarButton" role="menuitemcheckbox" aria-checked="true"><span class="icon-slot menu-check" data-icon="Check"></span><strong>工具栏</strong><small></small></button>
+          <div class="menu-divider"></div>
           <button class="menu-row" id="menuWordWrapButton" role="menuitem"><span class="icon-slot" data-icon="WrapText"></span><strong>自动换行</strong><small></small></button>
           <button class="menu-row" id="menuMarkdownWysiwygButton" role="menuitemradio"><span class="icon-slot" data-icon="NotebookPen"></span><strong>Markdown 即时编辑</strong><small></small></button>
           <button class="menu-row" id="menuMarkdownSplitButton" role="menuitemradio"><span class="icon-slot" data-icon="Columns2"></span><strong>Markdown 分屏预览</strong><small></small></button>
@@ -759,6 +761,9 @@
           <div class="menu-divider"></div>
           <button class="menu-row" id="editorUndoButton" role="menuitem"><span class="icon-slot" data-icon="Undo2"></span><strong>撤销</strong><small>Ctrl+Z</small></button>
           <button class="menu-row" id="editorRedoButton" role="menuitem"><span class="icon-slot" data-icon="Redo2"></span><strong>重做</strong><small>Ctrl+Y</small></button>
+          <div class="menu-divider"></div>
+          <button class="menu-row" id="editorUppercaseButton" role="menuitem"><span class="icon-slot" data-icon="CaseUpper"></span><strong>转为大写</strong><small>Ctrl+Shift+U</small></button>
+          <button class="menu-row" id="editorLowercaseButton" role="menuitem"><span class="icon-slot" data-icon="CaseLower"></span><strong>转为小写</strong><small>Ctrl+U</small></button>
           <div class="menu-divider"></div>
           <button class="menu-row" id="editorFindButton" role="menuitem"><span class="icon-slot" data-icon="Search"></span><strong>查找</strong><small>Ctrl+F</small></button>
           <button class="menu-row" id="editorReplaceButton" role="menuitem"><span class="icon-slot" data-icon="Replace"></span><strong>替换</strong><small>Ctrl+H</small></button>

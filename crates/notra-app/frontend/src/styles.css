@@ -149,6 +149,14 @@ select:focus-visible {
   grid-template-columns: minmax(0, 1fr) var(--right-sidebar-width);
 }
 
+#app.toolbar-hidden {
+  grid-template-rows: 40px 0 34px minmax(0, 1fr) 30px;
+}
+
+#app.toolbar-hidden .toolbar {
+  display: none !important;
+}
+
 .titlebar,
 .toolbar,
 .tabs,
@@ -2335,6 +2343,18 @@ body.dark .markdown-preview .token.variable {
 .menu-row.danger.active {
   background: color-mix(in srgb, var(--danger) 12%, transparent);
   border-color: color-mix(in srgb, var(--danger) 28%, transparent);
+}
+
+.menu-row .menu-check {
+  opacity: 0;
+  color: var(--primary);
+  display: grid;
+  place-items: center;
+  transition: opacity 120ms ease;
+}
+
+.menu-row[aria-checked="true"] .menu-check {
+  opacity: 1;
 }
 
 .menu-row:disabled {

@@ -296,6 +296,7 @@ interface SessionSnapshot {
   workspaceRoot: string | null;
   workMode: WorkMode;
   showDirectory: boolean;
+  showToolbar?: boolean;
   collapsedDirs: string[];
   activePath: string | null;
   activeDraftId: string | null;
@@ -763,6 +764,7 @@ const state = {
   replaceHistory: [] as string[],
   searchFavorites: [] as string[],
   showDirectory: false,
+  showToolbar: true,
   markdownEditMode: "wysiwyg" as MarkdownEditMode,
   markdownContentWidth: "typora" as MarkdownContentWidth,
   darkMode: false,
@@ -1570,6 +1572,7 @@ function registerAppCommands() {
     command("view.openSettings", "打开设置", "视图", openSettingsPage, { allowInInput: true }),
     command("view.toggleRightSidebar", "切换右侧栏", "视图", toggleRightSidebar, { allowInInput: true }),
     command("view.toggleWordWrap", "切换自动换行", "视图", toggleWordWrap),
+    command("view.toggleToolbar", "切换工具栏", "视图", toggleToolbar, { allowInInput: true }),
     command("view.toggleMinimap", "切换缩略图", "视图", toggleMinimap),
     command("view.toggleWhitespace", "切换空白符", "视图", cycleWhitespace),
     command("view.zoomIn", "增大编辑器字号", "视图", () => setFontSize(state.fontSize + 1), { allowInInput: true }),
@@ -1957,6 +1960,14 @@ function bindActions() {
     closeMenus();
     redoEditor();
   });
+  $("editorUppercaseButton").addEventListener("click", () => {
+    closeMenus();
+    transformToUppercase();
+  });
+  $("editorLowercaseButton").addEventListener("click", () => {
+    closeMenus();
+    transformToLowercase();
+  });
   $("editorFindButton").addEventListener("click", () => {
     closeMenus();
     openCurrentFind("find");
@@ -2176,6 +2187,7 @@ function bindAppMenus() {
   bindMenuAction("menuReplaceWorkspaceButton", () => void openWorkspaceFind("workspace-replace"));
   bindMenuAction("menuGoToLineButton", goToLine);
   bindMenuAction("menuCommandButton", openCommandPalette);
+  bindMenuAction("menuToolbarButton", toggleToolbar);
   bindMenuAction("menuWordWrapButton", toggleWordWrap);
   bindMenuAction("menuMarkdownWysiwygButton", () => setMarkdownEditMode("wysiwyg"));
   bindMenuAction("menuMarkdownSplitButton", () => setMarkdownEditMode("split"));
@@ -2271,6 +2283,8 @@ function updateEditorContextMenuState() {
   $<HTMLButtonElement>("editorSelectAllButton").disabled = !hasContent;
   $<HTMLButtonElement>("editorUndoButton").disabled = readOnly;
   $<HTMLButtonElement>("editorRedoButton").disabled = readOnly;
+  $<HTMLButtonElement>("editorUppercaseButton").disabled = readOnly || !hasContent;
+  $<HTMLButtonElement>("editorLowercaseButton").disabled = readOnly || !hasContent;
   $<HTMLButtonElement>("editorFindButton").disabled = false;
   $<HTMLButtonElement>("editorReplaceButton").disabled = readOnly;
   $<HTMLButtonElement>("editorFormatDocumentButton").disabled = readOnly || !isFormattingActionSupported(doc);
@@ -5632,6 +5646,7 @@ function renderChrome() {
     button.setAttribute("aria-checked", String(active));
   });
   setThemeButton();
+  renderToolbarVisibility();
 
   renderTabs();
 
@@ -5693,7 +5708,10 @@ function commandElementIds(): Record<string, string> {
   menuReplaceWorkspaceButton: "search.workspaceReplace",
   menuGoToLineButton: "navigation.goToLine",
   menuCommandButton: "navigation.commandPalette",
+  menuToolbarButton: "view.toggleToolbar",
   menuWordWrapButton: "view.toggleWordWrap",
+  editorUppercaseButton: "edit.uppercase",
+  editorLowercaseButton: "edit.lowercase",
   menuOutlineButton: "markdown.outline",
   tabSaveButton: "file.save",
   tabSaveAsButton: "file.saveAs",
@@ -6316,6 +6334,28 @@ function setLineEnding(lineEnding: string) {
   log(`行尾已转换为 ${lineEnding}`);
 }
 
+function toggleToolbar() {
+  setToolbarVisible(!state.showToolbar);
+}
+
+function setToolbarVisible(visible: boolean) {
+  if (state.showToolbar === visible) return;
+  state.showToolbar = visible;
+  renderToolbarVisibility();
+  requestEditorLayout();
+  scheduleSessionSave();
+  log(`工具栏 ${state.showToolbar ? "已显示" : "已隐藏"}`);
+}
+
+function renderToolbarVisibility() {
+  const visible = state.showToolbar;
+  $("app").classList.toggle("toolbar-hidden", !visible);
+  const button = document.getElementById("menuToolbarButton");
+  if (button) {
+    button.setAttribute("aria-checked", String(visible));
+  }
+}
+
 function toggleWordWrap() {
   setWordWrap(!state.wordWrap);
 }
@@ -6350,6 +6390,7 @@ function resetEditorView() {
   state.editorFontPreset = DEFAULT_EDITOR_FONT_PRESET;
   state.editorFontCustom = EDITOR_FONT_STACKS[DEFAULT_EDITOR_FONT_PRESET];
   state.markdownContentWidth = "typora";
+  state.showToolbar = true;
   state.explorerWidth = DEFAULT_EXPLORER_WIDTH;
   state.markdownPreviewWidth = 0;
   applyShellFontSettings();
@@ -8537,6 +8578,7 @@ function applySessionSnapshotSettings(snapshot: Partial<SessionSnapshot>) {
   state.markdownContentWidth = isMarkdownContentWidth(snapshot.markdownContentWidth)
     ? snapshot.markdownContentWidth
     : "typora";
+  state.showToolbar = typeof snapshot.showToolbar === "boolean" ? snapshot.showToolbar : state.showToolbar;
   state.wordWrap = snapshot.wordWrap ?? state.wordWrap;
   state.minimap = snapshot.minimap ?? state.minimap;
   state.smoothCaretAnimation = snapshot.smoothCaretAnimation ?? state.smoothCaretAnimation;
@@ -8877,6 +8919,7 @@ async function saveSession() {
     searchFavorites: state.searchFavorites.slice(0, 30),
     findView: state.findView,
     searchMode: getSearchMode(),
+    showToolbar: state.showToolbar,
     wordWrap: state.wordWrap,
     minimap: state.minimap,
     smoothCaretAnimation: state.smoothCaretAnimation,
