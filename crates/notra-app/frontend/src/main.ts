@@ -5573,6 +5573,253 @@ function currentMarkdownPreviewWidth() {
   return $("markdownPreview").getBoundingClientRect().width || $<HTMLElement>("editorArea").clientWidth * 0.42;
 }
 
+let ignoreTabClickUntil = 0;
+let tabDragCleanup: (() => void) | null = null;
+
+function handleTabPointerDown(docId: number, tabEl: HTMLElement, startEvent: PointerEvent) {
+  if (startEvent.button !== 0) return;
+  if ((startEvent.target as HTMLElement).closest(".tab-close")) return;
+  if (state.documents.length <= 1) return;
+
+  if (tabDragCleanup) {
+    tabDragCleanup();
+  }
+
+  const tabs = $("tabs");
+  const allTabs = Array.from(tabs.querySelectorAll<HTMLElement>(".tab"));
+  const fromIndex = allTabs.indexOf(tabEl);
+  if (fromIndex === -1) return;
+
+  const startX = startEvent.clientX;
+  const startY = startEvent.clientY;
+  const pointerId = startEvent.pointerId;
+
+  let hasStartedDrag = false;
+  let targetIndex = fromIndex;
+  let autoScrollRaf: number | null = null;
+  let lastClientX = startX;
+  let settleTimer: number | null = null;
+
+  let initialScrollLeft = tabs.scrollLeft;
+  let initialRects: DOMRect[] = [];
+  let initialCenters: number[] = [];
+  let shiftDistance = 0;
+  let tabsRect = tabs.getBoundingClientRect();
+
+  function initDragGeometry() {
+    tabsRect = tabs.getBoundingClientRect();
+    initialScrollLeft = tabs.scrollLeft;
+    initialRects = allTabs.map((el) => el.getBoundingClientRect());
+    initialCenters = initialRects.map((r) => r.left + r.width / 2);
+    shiftDistance = tabEl.offsetWidth + 4;
+
+    for (let i = 0; i < allTabs.length; i++) {
+      if (i !== fromIndex) {
+        allTabs[i].style.transition = "transform 160ms cubic-bezier(0.2, 0, 0, 1)";
+      }
+    }
+  }
+
+  function stopAutoScroll() {
+    if (autoScrollRaf !== null) {
+      cancelAnimationFrame(autoScrollRaf);
+      autoScrollRaf = null;
+    }
+  }
+
+  function updateAutoScroll() {
+    if (!hasStartedDrag) return;
+    const currentTabsRect = tabs.getBoundingClientRect();
+    const EDGE_ZONE = 44;
+    let speed = 0;
+
+    if (lastClientX < currentTabsRect.left + EDGE_ZONE) {
+      const dist = Math.max(0, lastClientX - currentTabsRect.left);
+      const ratio = (EDGE_ZONE - dist) / EDGE_ZONE;
+      speed = -Math.round(3 + ratio * 9);
+    } else if (lastClientX > currentTabsRect.right - EDGE_ZONE) {
+      const dist = Math.max(0, currentTabsRect.right - lastClientX);
+      const ratio = (EDGE_ZONE - dist) / EDGE_ZONE;
+      speed = Math.round(3 + ratio * 9);
+    }
+
+    if (speed !== 0) {
+      const prevScroll = tabs.scrollLeft;
+      tabs.scrollLeft += speed;
+      if (tabs.scrollLeft !== prevScroll) {
+        updatePositions(lastClientX);
+        scheduleTabScrollStateUpdate();
+      }
+      autoScrollRaf = requestAnimationFrame(updateAutoScroll);
+    } else {
+      autoScrollRaf = null;
+    }
+  }
+
+  function checkAutoScroll() {
+    const currentTabsRect = tabs.getBoundingClientRect();
+    const EDGE_ZONE = 44;
+    const inZone = lastClientX < currentTabsRect.left + EDGE_ZONE || lastClientX > currentTabsRect.right - EDGE_ZONE;
+    if (inZone && autoScrollRaf === null) {
+      autoScrollRaf = requestAnimationFrame(updateAutoScroll);
+    } else if (!inZone && autoScrollRaf !== null) {
+      stopAutoScroll();
+    }
+  }
+
+  function updatePositions(clientX: number) {
+    const deltaX = clientX - startX;
+    const scrollDiff = tabs.scrollLeft - initialScrollLeft;
+    const draggedTranslateX = deltaX + scrollDiff;
+
+    tabEl.style.transform = `translate3d(${draggedTranslateX}px, 0, 0)`;
+
+    const currentDraggedCenterX = initialCenters[fromIndex] + deltaX + scrollDiff;
+
+    const HYSTERESIS = 8;
+    let newTarget = fromIndex;
+
+    // Check rightward target slots
+    for (let i = allTabs.length - 1; i > fromIndex; i--) {
+      const threshold = targetIndex >= i ? initialCenters[i] - HYSTERESIS : initialCenters[i] + HYSTERESIS;
+      if (currentDraggedCenterX > threshold) {
+        newTarget = i;
+        break;
+      }
+    }
+
+    // Check leftward target slots
+    if (newTarget === fromIndex) {
+      for (let i = 0; i < fromIndex; i++) {
+        const threshold = targetIndex <= i ? initialCenters[i] + HYSTERESIS : initialCenters[i] - HYSTERESIS;
+        if (currentDraggedCenterX < threshold) {
+          newTarget = i;
+          break;
+        }
+      }
+    }
+
+    targetIndex = newTarget;
+
+    for (let i = 0; i < allTabs.length; i++) {
+      if (i === fromIndex) continue;
+      let shift = 0;
+      if (targetIndex > fromIndex && i > fromIndex && i <= targetIndex) {
+        shift = -shiftDistance;
+      } else if (targetIndex < fromIndex && i >= targetIndex && i < fromIndex) {
+        shift = shiftDistance;
+      }
+      allTabs[i].style.transform = shift !== 0 ? `translate3d(${shift}px, 0, 0)` : "";
+    }
+  }
+
+  function onPointerMove(moveEvent: PointerEvent) {
+    if (moveEvent.pointerId !== pointerId) return;
+    lastClientX = moveEvent.clientX;
+
+    if (!hasStartedDrag) {
+      const distance = Math.hypot(moveEvent.clientX - startX, moveEvent.clientY - startY);
+      if (distance > 5) {
+        hasStartedDrag = true;
+        initDragGeometry();
+        tabEl.classList.add("tab-dragging-active");
+        document.body.classList.add("tab-reordering");
+      }
+    }
+
+    if (hasStartedDrag) {
+      updatePositions(moveEvent.clientX);
+      checkAutoScroll();
+    }
+  }
+
+  function onKeyDown(e: KeyboardEvent) {
+    if (e.key === "Escape") {
+      e.preventDefault();
+      finishDrag(false);
+    }
+  }
+
+  function finishDrag(apply: boolean) {
+    window.removeEventListener("pointermove", onPointerMove);
+    window.removeEventListener("pointerup", onPointerUp);
+    window.removeEventListener("pointercancel", onPointerCancel);
+    window.removeEventListener("keydown", onKeyDown);
+    tabDragCleanup = null;
+    stopAutoScroll();
+
+    if (!hasStartedDrag) return;
+
+    ignoreTabClickUntil = Date.now() + 250;
+    document.body.classList.remove("tab-reordering");
+
+    const finalTarget = apply ? targetIndex : fromIndex;
+
+    if (!apply) {
+      for (let i = 0; i < allTabs.length; i++) {
+        if (i !== fromIndex) {
+          allTabs[i].style.transform = "";
+        }
+      }
+    }
+
+    let targetOffset = 0;
+    if (finalTarget > fromIndex) {
+      targetOffset = (initialRects[finalTarget].right - tabEl.offsetWidth) - initialRects[fromIndex].left;
+    } else if (finalTarget < fromIndex) {
+      targetOffset = initialRects[finalTarget].left - initialRects[fromIndex].left;
+    }
+
+    tabEl.classList.remove("tab-dragging-active");
+    tabEl.classList.add("tab-settling");
+    tabEl.style.transform = `translate3d(${targetOffset}px, 0, 0)`;
+
+    settleTimer = window.setTimeout(() => {
+      settleTimer = null;
+      for (const el of allTabs) {
+        el.style.transform = "";
+        el.style.transition = "";
+        el.classList.remove("tab-settling", "tab-dragging-active");
+      }
+
+      if (apply) {
+        if (targetIndex !== fromIndex) {
+          const docCurrentIndex = state.documents.findIndex((d) => d.id === docId);
+          if (docCurrentIndex !== -1 && targetIndex < state.documents.length) {
+            const [movedDoc] = state.documents.splice(docCurrentIndex, 1);
+            state.documents.splice(targetIndex, 0, movedDoc);
+            renderedTabsSignature = "";
+          }
+        }
+        activateDocument(docId);
+        scheduleSessionSave();
+      }
+    }, 150);
+  }
+
+  function onPointerUp(upEvent: PointerEvent) {
+    if (upEvent.pointerId !== pointerId) return;
+    finishDrag(true);
+  }
+
+  function onPointerCancel(cancelEvent: PointerEvent) {
+    if (cancelEvent.pointerId !== pointerId) return;
+    finishDrag(false);
+  }
+
+  tabDragCleanup = () => {
+    if (settleTimer !== null) {
+      clearTimeout(settleTimer);
+      settleTimer = null;
+    }
+    finishDrag(false);
+  };
+  window.addEventListener("pointermove", onPointerMove);
+  window.addEventListener("pointerup", onPointerUp);
+  window.addEventListener("pointercancel", onPointerCancel);
+  window.addEventListener("keydown", onKeyDown);
+}
+
 function renderTabs() {
   const signature = JSON.stringify(
     state.documents.map((item) => ({
@@ -5614,7 +5861,11 @@ function renderTabs() {
       event.stopPropagation();
       void closeDocument(item.id);
     });
-    tab.addEventListener("click", () => activateDocument(item.id));
+    tab.addEventListener("click", () => {
+      if (Date.now() < ignoreTabClickUntil) return;
+      activateDocument(item.id);
+    });
+    tab.addEventListener("pointerdown", (event) => handleTabPointerDown(item.id, tab, event));
     tab.addEventListener("mousedown", (event) => {
       if (event.button === 1) event.preventDefault();
     });
