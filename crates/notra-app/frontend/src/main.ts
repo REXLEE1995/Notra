@@ -128,6 +128,7 @@ import "monaco-editor/esm/vs/basic-languages/monaco.contribution";
 import "monaco-editor/esm/vs/editor/contrib/linesOperations/browser/linesOperations";
 import "monaco-editor/esm/vs/editor/contrib/bracketMatching/browser/bracketMatching";
 import "monaco-editor/esm/vs/editor/contrib/wordHighlighter/browser/wordHighlighter";
+import "monaco-editor/esm/vs/editor/contrib/dnd/browser/dnd";
 import "monaco-editor/esm/vs/language/json/monaco.contribution";
 import "./styles.css";
 
@@ -297,6 +298,8 @@ interface SessionSnapshot {
   workMode: WorkMode;
   showDirectory: boolean;
   showToolbar?: boolean;
+  columnSelection?: boolean;
+  dragAndDrop?: boolean;
   collapsedDirs: string[];
   activePath: string | null;
   activeDraftId: string | null;
@@ -765,6 +768,8 @@ const state = {
   searchFavorites: [] as string[],
   showDirectory: false,
   showToolbar: true,
+  columnSelection: false,
+  dragAndDrop: true,
   markdownEditMode: "wysiwyg" as MarkdownEditMode,
   markdownContentWidth: "typora" as MarkdownContentWidth,
   darkMode: false,
@@ -1218,7 +1223,8 @@ function bootstrap() {
     autoClosingBrackets: "languageDefined",
     autoClosingQuotes: "languageDefined",
     autoSurround: "languageDefined",
-    dragAndDrop: true,
+    dragAndDrop: state.dragAndDrop,
+    columnSelection: state.columnSelection,
     links: true,
     hover: { enabled: true, delay: 300 },
     parameterHints: { enabled: true, cycle: true },
@@ -1226,7 +1232,7 @@ function bootstrap() {
     tabCompletion: "on",
     wordBasedSuggestions: "currentDocument",
     quickSuggestions: { other: true, comments: false, strings: false },
-    multiCursorModifier: "alt",
+    multiCursorModifier: "ctrlCmd",
     multiCursorPaste: "spread",
     contextmenu: false,
     copyWithSyntaxHighlighting: true,
@@ -1572,6 +1578,7 @@ function registerAppCommands() {
     command("view.openSettings", "打开设置", "视图", openSettingsPage, { allowInInput: true }),
     command("view.toggleRightSidebar", "切换右侧栏", "视图", toggleRightSidebar, { allowInInput: true }),
     command("view.toggleWordWrap", "切换自动换行", "视图", toggleWordWrap),
+    command("view.toggleColumnSelection", "切换列编辑模式", "视图", toggleColumnSelection),
     command("view.toggleToolbar", "切换工具栏", "视图", toggleToolbar, { allowInInput: true }),
     command("view.toggleMinimap", "切换缩略图", "视图", toggleMinimap),
     command("view.toggleWhitespace", "切换空白符", "视图", cycleWhitespace),
@@ -1875,6 +1882,8 @@ function bindActions() {
   bindCustomFontInput("settingsShellFontCustom", "shell");
   bindCustomFontInput("settingsEditorFontCustom", "editor");
   bindSegmentedSetting("settingsWordWrapControl", (value) => setWordWrap(value === "on"));
+  bindSegmentedSetting("settingsColumnSelectionControl", (value) => setColumnSelection(value === "on"));
+  bindSegmentedSetting("settingsDragAndDropControl", (value) => setDragAndDrop(value === "on"));
   bindSegmentedSetting("settingsMinimapControl", (value) => setMinimap(value === "on"));
   bindSegmentedSetting("settingsCaretAnimationControl", (value) => setSmoothCaretAnimation(value === "on"));
   bindSegmentedSetting("settingsWhitespaceControl", (value) => setWhitespace(value as RenderWhitespaceMode));
@@ -2189,6 +2198,7 @@ function bindAppMenus() {
   bindMenuAction("menuCommandButton", openCommandPalette);
   bindMenuAction("menuToolbarButton", toggleToolbar);
   bindMenuAction("menuWordWrapButton", toggleWordWrap);
+  bindMenuAction("menuColumnSelectionButton", toggleColumnSelection);
   bindMenuAction("menuMarkdownWysiwygButton", () => setMarkdownEditMode("wysiwyg"));
   bindMenuAction("menuMarkdownSplitButton", () => setMarkdownEditMode("split"));
   bindMenuAction("menuMarkdownSourceButton", () => setMarkdownEditMode("source"));
@@ -2917,6 +2927,33 @@ function setWordWrap(enabled: boolean) {
   renderSettingsMenu();
   scheduleSessionSave();
   log(`自动换行 ${state.wordWrap ? "已开启" : "已关闭"}`);
+}
+
+function setColumnSelection(enabled: boolean) {
+  if (state.columnSelection === enabled) return;
+  state.columnSelection = enabled;
+  applyEditorSettings();
+  renderChrome();
+  renderSettingsMenu();
+  scheduleSessionSave();
+  log(`列编辑模式 ${state.columnSelection ? "已开启" : "已关闭"}`);
+}
+
+function toggleColumnSelection() {
+  setColumnSelection(!state.columnSelection);
+}
+
+function setDragAndDrop(enabled: boolean) {
+  if (state.dragAndDrop === enabled) return;
+  state.dragAndDrop = enabled;
+  applyEditorSettings();
+  renderSettingsMenu();
+  scheduleSessionSave();
+  log(`拖动选中文本 ${state.dragAndDrop ? "已开启" : "已关闭"}`);
+}
+
+function toggleDragAndDrop() {
+  setDragAndDrop(!state.dragAndDrop);
 }
 
 function setMinimap(enabled: boolean) {
@@ -5406,6 +5443,8 @@ function applyEditorPerformanceProfile(doc: OpenDocument) {
     readOnlyMessage: { value: doc.readOnlyReason || "当前文档只读" },
     minimap: { enabled: !large && state.minimap },
     wordWrap: !large && state.wordWrap ? "on" : "off",
+    columnSelection: state.columnSelection,
+    dragAndDrop: state.dragAndDrop,
     cursorSmoothCaretAnimation: state.smoothCaretAnimation ? "on" : "off",
     renderWhitespace: large ? "none" : state.renderWhitespace,
     fontFamily: editorFont,
@@ -5639,6 +5678,11 @@ function renderChrome() {
   $<HTMLButtonElement>("menuCloseWorkspaceButton").disabled = !state.workspace;
   $("menuOutlineButton").classList.toggle("hidden", !isMarkdownLikeDocument(doc));
   $("menuWordWrapButton").classList.toggle("active", state.wordWrap);
+  const columnSelectionBtn = document.getElementById("menuColumnSelectionButton");
+  if (columnSelectionBtn) {
+    columnSelectionBtn.setAttribute("aria-checked", String(state.columnSelection));
+    columnSelectionBtn.classList.toggle("active", state.columnSelection);
+  }
   ["wysiwyg", "split", "source"].forEach((mode) => {
     const button = $<HTMLButtonElement>(`menuMarkdown${mode[0].toUpperCase()}${mode.slice(1)}Button`);
     const active = markdownDocument && state.markdownEditMode === mode;
@@ -5710,6 +5754,7 @@ function commandElementIds(): Record<string, string> {
   menuCommandButton: "navigation.commandPalette",
   menuToolbarButton: "view.toggleToolbar",
   menuWordWrapButton: "view.toggleWordWrap",
+  menuColumnSelectionButton: "view.toggleColumnSelection",
   editorUppercaseButton: "edit.uppercase",
   editorLowercaseButton: "edit.lowercase",
   menuOutlineButton: "markdown.outline",
@@ -5899,6 +5944,8 @@ function renderSettingsMenu() {
   setFontInputValue("settingsShellFontCustom", state.shellFontCustom, state.shellFontMode === "custom");
   setFontInputValue("settingsEditorFontCustom", state.editorFontCustom, state.editorFontMode === "custom");
   setSegmentedValue("settingsWordWrapControl", state.wordWrap ? "on" : "off");
+  setSegmentedValue("settingsColumnSelectionControl", state.columnSelection ? "on" : "off");
+  setSegmentedValue("settingsDragAndDropControl", state.dragAndDrop ? "on" : "off");
   setSegmentedValue("settingsMinimapControl", state.minimap ? "on" : "off");
   setSegmentedValue("settingsCaretAnimationControl", state.smoothCaretAnimation ? "on" : "off");
   setSegmentedValue("settingsWhitespaceControl", state.renderWhitespace);
@@ -6391,6 +6438,8 @@ function resetEditorView() {
   state.editorFontCustom = EDITOR_FONT_STACKS[DEFAULT_EDITOR_FONT_PRESET];
   state.markdownContentWidth = "typora";
   state.showToolbar = true;
+  state.columnSelection = false;
+  state.dragAndDrop = true;
   state.explorerWidth = DEFAULT_EXPLORER_WIDTH;
   state.markdownPreviewWidth = 0;
   applyShellFontSettings();
@@ -8579,6 +8628,8 @@ function applySessionSnapshotSettings(snapshot: Partial<SessionSnapshot>) {
     ? snapshot.markdownContentWidth
     : "typora";
   state.showToolbar = typeof snapshot.showToolbar === "boolean" ? snapshot.showToolbar : state.showToolbar;
+  state.columnSelection = typeof snapshot.columnSelection === "boolean" ? snapshot.columnSelection : state.columnSelection;
+  state.dragAndDrop = typeof snapshot.dragAndDrop === "boolean" ? snapshot.dragAndDrop : state.dragAndDrop;
   state.wordWrap = snapshot.wordWrap ?? state.wordWrap;
   state.minimap = snapshot.minimap ?? state.minimap;
   state.smoothCaretAnimation = snapshot.smoothCaretAnimation ?? state.smoothCaretAnimation;
@@ -8920,6 +8971,8 @@ async function saveSession() {
     findView: state.findView,
     searchMode: getSearchMode(),
     showToolbar: state.showToolbar,
+    columnSelection: state.columnSelection,
+    dragAndDrop: state.dragAndDrop,
     wordWrap: state.wordWrap,
     minimap: state.minimap,
     smoothCaretAnimation: state.smoothCaretAnimation,
